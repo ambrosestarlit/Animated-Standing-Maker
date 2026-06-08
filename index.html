@@ -2921,22 +2921,18 @@
       return palette;
     }
     function lzwEncodeIndices(indices, minCodeSize = 8) {
+      // 安定性優先のGIF LZW。辞書肥大によるコード幅ズレを避けるため、
+      // 250ピクセルごとにClear Codeを挟み、常に9bit幅で安全に書き出す。
       const clear = 1 << minCodeSize;
       const end = clear + 1;
-      let codeSize = minCodeSize + 1;
-      let nextCode = end + 1;
-      let dict = new Map();
-      const reset = () => {
-        dict = new Map();
-        for (let i = 0; i < clear; i++) dict.set(String(i), i);
-        codeSize = minCodeSize + 1;
-        nextCode = end + 1;
-      };
+      const codeSize = minCodeSize + 1;
       const bytes = [];
       let bitBuffer = 0;
       let bitLength = 0;
+      let literalCount = 0;
+
       const writeCode = (code) => {
-        bitBuffer |= code << bitLength;
+        bitBuffer |= (code & ((1 << codeSize) - 1)) << bitLength;
         bitLength += codeSize;
         while (bitLength >= 8) {
           bytes.push(bitBuffer & 255);
@@ -2944,29 +2940,20 @@
           bitLength -= 8;
         }
       };
-      reset();
+
       writeCode(clear);
-      let w = String(indices[0] || 0);
-      for (let i = 1; i < indices.length; i++) {
-        const k = indices[i];
-        const wk = `${w},${k}`;
-        if (dict.has(wk)) {
-          w = wk;
-        } else {
-          writeCode(dict.get(w));
-          if (nextCode < 4096) {
-            dict.set(wk, nextCode++);
-            if (nextCode === (1 << codeSize) && codeSize < 12) codeSize++;
-          } else {
-            writeCode(clear);
-            reset();
-          }
-          w = String(k);
+      for (let i = 0; i < indices.length; i++) {
+        // 256付近でデコーダ側が10bitへ拡張する前に辞書をリセットする。
+        if (literalCount >= 250) {
+          writeCode(clear);
+          literalCount = 0;
         }
+        writeCode(indices[i] & 255);
+        literalCount++;
       }
-      writeCode(dict.get(w));
       writeCode(end);
       if (bitLength > 0) bytes.push(bitBuffer & 255);
+
       const blocks = [];
       for (let i = 0; i < bytes.length; i += 255) {
         const sub = bytes.slice(i, i + 255);
@@ -3004,6 +2991,7 @@
         frames.push(canvas.getContext("2d").getImageData(0, 0, outWidth, outHeight).data);
       }
       const gif = makeGif(frames, outWidth, outHeight, fps);
+      if (!gif || !gif.size) throw new Error("GIF export failed");
       downloadBlob(gif, `${safeName}_transparent_${seconds}s_${fps}fps_${formatDateForFile()}.gif`);
       setStatusT("gifExported", { seconds, fps });
     }
