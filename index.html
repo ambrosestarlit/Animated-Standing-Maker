@@ -1057,7 +1057,7 @@
             <li>ブラウザソースを右クリックして「対話」を開きます。</li>
             <li><span class="manual-code">OBS WebSocket URL</span> は通常 <span class="manual-code">ws://127.0.0.1:4455</span> のままでOKです。</li>
             <li><span class="manual-code">Password</span> に、OBS WebSocket設定で指定したパスワードを入力します。</li>
-            <li>「マイク入力で口パク」を押し、マイク入力を選択します。</li>
+            <li>「OBSソース音声で口パク」を押し、口パク対象にしたいOBSソース音声を選択します。Desktop Audioは自動候補から除外されます。</li><li>Discordだけで口パクしたい場合は、OBSにDiscord専用の音声ソースを追加してから「Discord音声で口パク」を押します。</li>
           </ol>
         </section>
         <section>
@@ -3017,17 +3017,17 @@ label{display:grid;gap:3px;font-size:11px;color:rgba(255,255,255,.82)}
 <div id="micPanel">
   <div class="row">
     <button id="micButton" type="button">直接マイク開始</button>
-    <button id="obsWsButton" type="button">マイク入力で口パク</button>
+    <button id="obsWsButton" type="button">OBSソース音声で口パク</button><button id="discordWsButton" type="button">Discord音声で口パク</button>
     <button id="hidePanelButton" type="button">隠す</button>
   </div>
   <div class="row">
     <label class="field">OBS WebSocket URL<input id="obsWsUrl" value="ws://127.0.0.1:4455"></label>
     <label class="field">Password<input id="obsWsPassword" type="password" placeholder="OBS WebSocketのパスワード"></label>
-    <label class="field">マイク入力<select id="obsWsInputName"><option value="">自動（マイク入力から検出）</option></select></label>
+    <label class="field">口パク対象OBSソース<select id="obsWsInputName"><option value="">自動（OBSソース音声から検出）</option></select></label>
   </div>
   <div id="micStatus">OBS WebSocketの認証を必ずONにして、Passwordを入力してください。</div>
   <div id="micMeter"><div id="micMeterBar"></div></div>
-  <div class="smallnote">OBS側で「ツール → WebSocketサーバー設定」を開き、「認証を有効化」に必ずチェックを入れてください。Password欄にはOBSで設定したパスワードを入力します。</div>
+  <div class="smallnote">Discordだけで口パクする場合は、Desktop Audioではなく、OBSにDiscord専用の音声ソースを追加してから「Discord音声で口パク」を押してください。認証は必ずON、Password必須です。</div>
 </div>
 <script>
 const PROJECT=${project};
@@ -3057,6 +3057,7 @@ let obsMicInputNames=new Set();
 const micPanel=document.getElementById('micPanel');
 const micButton=document.getElementById('micButton');
 const obsWsButton=document.getElementById('obsWsButton');
+const discordWsButton=document.getElementById('discordWsButton');
 const hidePanelButton=document.getElementById('hidePanelButton');
 const micStatus=document.getElementById('micStatus');
 const micMeterBar=document.getElementById('micMeterBar');
@@ -3092,19 +3093,38 @@ function sha256Base64(text){return b64Bytes(sha256Bytes(utf8Bytes(text)))}
 function obsAuth(password,salt,challenge){const secret=sha256Base64(String(password||'')+String(salt||''));return sha256Base64(secret+String(challenge||''))}
 function sendObs(op,d){if(obsWs&&obsWs.readyState===WebSocket.OPEN)obsWs.send(JSON.stringify({op,d}))}
 function sendObsRequest(requestType,requestData={}){const requestId=String(obsWsRequestId++);sendObs(6,{requestType,requestId,requestData});return requestId}
-function isMicLikeInputInfo(input){const data=String((input?.inputName||'')+' '+(input?.inputKind||'')).toLowerCase();return data.includes('mic')||data.includes('microphone')||data.includes('マイク')||data.includes('input_capture')||data.includes('音声入力')}
-function populateObsInputSelect(inputs){
+function inputNameText(input){return String((input?.inputName||'')+' '+(input?.inputKind||'')).toLowerCase()}
+function isGlobalDesktopAudioInput(input){
+  const data=inputNameText(input);
+  return data.includes('desktop audio')||data.includes('デスクトップ音声')||data.includes('desktop')||data.includes('既定')||data.includes('default')||data.includes('wasapi_output_capture');
+}
+function isMicLikeInputInfo(input){
+  const data=inputNameText(input);
+  return !isGlobalDesktopAudioInput(input)&&(data.includes('mic')||data.includes('microphone')||data.includes('マイク')||data.includes('input_capture')||data.includes('音声入力')||data.includes('wasapi_input_capture'));
+}
+function isDiscordLikeInputInfo(input){
+  const data=inputNameText(input);
+  return !isGlobalDesktopAudioInput(input)&&(data.includes('discord')||data.includes('ディスコード'));
+}
+function isObsSourceAudioInput(input){
+  const data=inputNameText(input);
+  if(isGlobalDesktopAudioInput(input))return false;
+  if(isDiscordLikeInputInfo(input)||isMicLikeInputInfo(input))return true;
+  return data.includes('application_audio_capture')||data.includes('window_capture')||data.includes('game_capture')||data.includes('browser_source')||data.includes('media_source')||data.includes('ffmpeg_source')||data.includes('vlc_source')||data.includes('audio')||data.includes('音声');
+}
+function populateObsInputSelect(inputs, preferred='auto'){
   const select=obsWsInputName;
   if(!select)return;
   const list=safeArray(inputs);
-  const micList=list.filter(isMicLikeInputInfo);
-  obsMicInputNames=new Set(micList.map((input)=>String(input.inputName||'')).filter(Boolean));
+  const sourceAudioList=list.filter(isObsSourceAudioInput);
+  const displayList=sourceAudioList.length?sourceAudioList:list.filter((input)=>!isGlobalDesktopAudioInput(input));
+  obsMicInputNames=new Set(displayList.map((input)=>String(input.inputName||'')).filter(Boolean));
   select.innerHTML='';
   const auto=document.createElement('option');
   auto.value='';
-  auto.textContent='自動（OBSのマイク入力から検出）';
+  auto.textContent='自動（OBSソース音声から検出 / Desktop Audio除外）';
   select.appendChild(auto);
-  for(const input of (micList.length?micList:list)){
+  for(const input of displayList){
     const name=String(input.inputName||'');
     if(!name)continue;
     const option=document.createElement('option');
@@ -3112,9 +3132,24 @@ function populateObsInputSelect(inputs){
     option.textContent=name;
     select.appendChild(option);
   }
-  if(select.options.length>1)select.value=select.options[1].value;
+  const discord=displayList.find(isDiscordLikeInputInfo);
+  const mic=displayList.find(isMicLikeInputInfo);
+  if(preferred==='discord'&&discord)select.value=String(discord.inputName||'');
+  else if(preferred==='mic'&&mic)select.value=String(mic.inputName||'');
+  else if(select.options.length>1)select.value=select.options[1].value;
 }
-async function connectObsWebSocket(){
+function selectDiscordInputIfAvailable(){
+  const select=obsWsInputName;
+  if(!select)return false;
+  for(const option of Array.from(select.options||[])){
+    if(String(option.textContent||option.value||'').toLowerCase().includes('discord')||String(option.textContent||'').includes('ディスコード')){
+      select.value=option.value;
+      return true;
+    }
+  }
+  return false;
+}
+async function connectObsWebSocket(preferred='auto'){
   const url=(obsWsUrlInput?.value||'ws://127.0.0.1:4455').trim();
   const password=obsWsPasswordInput?.value||'';
   try{
@@ -3160,18 +3195,26 @@ async function connectObsWebSocket(){
       }
       if(msg.op===7&&msg.d?.requestId===getInputListRequestId){
         const inputs=safeArray(msg.d?.responseData?.inputs);
-        populateObsInputSelect(inputs);
-        const selected=(obsWsInputName?.value||'').trim();
-        setMicStatus(selected?('マイク入力を使用：'+selected):'マイク入力を自動検出中');
+        populateObsInputSelect(inputs, preferred);
+        if(preferred==='discord'&&!selectDiscordInputIfAvailable())setMicStatus('Discord音声ソースが見つかりません。OBSにDiscord専用の音声ソースを追加してください。');
+        else{
+          const selected=(obsWsInputName?.value||'').trim();
+          setMicStatus(selected?('口パク対象音声：'+selected):'音声ソースを自動検出中');
+        }
         return;
       }
       if(msg.op===5&&msg.d?.eventType==='InputVolumeMeters'){
         const inputs=safeArray(msg.d?.eventData?.inputs);
         const selected=(obsWsInputName?.value||'').trim();
-        let candidates=inputs;
+        let candidates=[];
         if(selected)candidates=inputs.filter((input)=>String(input.inputName||'')===selected||String(input.inputName||'').includes(selected));
         else if(obsMicInputNames.size)candidates=inputs.filter((input)=>obsMicInputNames.has(String(input.inputName||'')));
-        if(!candidates.length)candidates=inputs;
+        if(!candidates.length)candidates=inputs.filter(isObsSourceAudioInput);
+        if(!candidates.length){
+          setLipLevel(0);
+          setMicStatus('OBSソース音声が見つかりません。Desktop Audioではなく、DiscordやマイクをOBSソースとして追加してください。');
+          return;
+        }
         let best=0,usedName='';
         for(const input of candidates){
           const name=String(input.inputName||'');
@@ -3179,7 +3222,7 @@ async function connectObsWebSocket(){
           if(level>best){best=level;usedName=name}
         }
         setLipLevel(best);
-        if(usedName)setMicStatus('マイク入力で口パク中：' + usedName);
+        if(usedName)setMicStatus('口パク対象音声：' + usedName);
       }
     };
   }catch(e){
@@ -3224,7 +3267,8 @@ async function setupMicByUser(){
   }
 }
 micButton?.addEventListener('click',setupMicByUser);
-obsWsButton?.addEventListener('click',connectObsWebSocket);
+obsWsButton?.addEventListener('click',()=>connectObsWebSocket('auto'));
+discordWsButton?.addEventListener('click',()=>connectObsWebSocket('discord'));
 hidePanelButton?.addEventListener('click',()=>micPanel?.classList.add('hidden'));
 
 const canvas=document.getElementById('c'),ctx=canvas.getContext('2d',{alpha:true});
