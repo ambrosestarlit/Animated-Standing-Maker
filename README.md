@@ -1,11 +1,7 @@
-# AnimatedStandingMaker v21
+# AnimatedStandingMaker v22
 
-## 修正
-- OBS音声読み込みでPC全体のDesktop Audioを拾わないよう修正
-- `Desktop Audio` / `デスクトップ音声` / `wasapi_output_capture` を自動候補から除外
-- OBSに追加した音声ソースを優先して口パク対象にするよう変更
-- 候補がない場合はDesktop Audioへフォールバックせず、OBSソース追加を案内
-
-## Discordだけで口パクする場合
-OBS側でDiscord専用の音声ソースを作ってください。
-Desktop AudioはPC全体の音が混ざるため、自動候補から除外しています。
+## 追加
+- OBS用HTMLに「発話開始バウンド」を追加
+- 無音状態から音声入力が入った瞬間だけキャラクター全体がぴょこっと跳ねる
+- 連続発話中は常時跳ねず、無音を挟んだ次の発話開始時に再発火
+- OBS操作パネルにON/OFFと強さスライダーを追加

@@ -1057,7 +1057,7 @@
             <li>ブラウザソースを右クリックして「対話」を開きます。</li>
             <li><span class="manual-code">OBS WebSocket URL</span> は通常 <span class="manual-code">ws://127.0.0.1:4455</span> のままでOKです。</li>
             <li><span class="manual-code">Password</span> に、OBS WebSocket設定で指定したパスワードを入力します。</li>
-            <li>「OBSソース音声で口パク」を押し、口パク対象にしたいOBSソース音声を選択します。Desktop Audioは自動候補から除外されます。</li><li>Discordだけで口パクしたい場合は、OBSにDiscord専用の音声ソースを追加してから「Discord音声で口パク」を押します。</li>
+            <li>「OBSソース音声で口パク」を押し、口パク対象にしたいOBSソース音声を選択します。Desktop Audioは自動候補から除外されます。</li><li>Discordだけで口パクしたい場合は、OBSにDiscord専用の音声ソースを追加してから「Discord音声で口パク」を押します。 音声が無音から入った瞬間には、発話開始バウンドでキャラクターがぴょこっと跳ねます。</li>
           </ol>
         </section>
         <section>
@@ -3021,6 +3021,10 @@ label{display:grid;gap:3px;font-size:11px;color:rgba(255,255,255,.82)}
     <button id="hidePanelButton" type="button">隠す</button>
   </div>
   <div class="row">
+    <label class="field">発話開始バウンド<select id="voiceBounceEnabled"><option value="on" selected>ON</option><option value="off">OFF</option></select></label>
+    <label class="field">ぴょこ強さ<input id="voiceBounceAmount" type="range" min="0" max="90" value="34"></label>
+  </div>
+  <div class="row">
     <label class="field">OBS WebSocket URL<input id="obsWsUrl" value="ws://127.0.0.1:4455"></label>
     <label class="field">Password<input id="obsWsPassword" type="password" placeholder="OBS WebSocketのパスワード"></label>
     <label class="field">口パク対象OBSソース<select id="obsWsInputName"><option value="">自動（OBSソース音声から検出）</option></select></label>
@@ -3064,9 +3068,46 @@ const micMeterBar=document.getElementById('micMeterBar');
 const obsWsUrlInput=document.getElementById('obsWsUrl');
 const obsWsPasswordInput=document.getElementById('obsWsPassword');
 const obsWsInputName=document.getElementById('obsWsInputName');
+const voiceBounceEnabled=document.getElementById('voiceBounceEnabled');
+const voiceBounceAmount=document.getElementById('voiceBounceAmount');
+let voiceActive=false;
+let silenceStartedAt=0;
+let lastBounceAt=-999;
+let voiceBounceStartAt=-999;
 function setMicStatus(text){if(micStatus)micStatus.textContent=text}
 function setMicMeter(value){if(micMeterBar)micMeterBar.style.width=Math.round(clamp(value,0,1)*100)+'%'}
-function setLipLevel(value){micLevel=Number(value)||0;lip=micLevel>0.022;setMicMeter(Math.min(1,micLevel/0.12))}
+function setLipLevel(value){
+  micLevel=Number(value)||0;
+  const now=performance.now()/1000;
+  const threshold=0.022;
+  const active=micLevel>threshold;
+  if(active&&!voiceActive){
+    const silentLongEnough=(now-silenceStartedAt)>0.18;
+    const cooldown=(now-lastBounceAt)>0.36;
+    if(silentLongEnough&&cooldown&&(voiceBounceEnabled?.value!=='off')){
+      voiceBounceStartAt=now;
+      lastBounceAt=now;
+    }
+  }
+  if(!active&&voiceActive)silenceStartedAt=now;
+  voiceActive=active;
+  lip=active;
+  setMicMeter(Math.min(1,micLevel/0.12));
+}
+function voiceBounceTransform(t){
+  if(voiceBounceEnabled?.value==='off')return{y:0,scaleX:1,scaleY:1};
+  const duration=0.42;
+  const u=(t-voiceBounceStartAt)/duration;
+  if(u<0||u>1)return{y:0,scaleX:1,scaleY:1};
+  const amp=Number(voiceBounceAmount?.value||34);
+  const jump=Math.sin(Math.PI*u)*Math.pow(1-u,0.42);
+  const settle=Math.sin(Math.PI*2*u)*Math.pow(1-u,1.4)*0.18;
+  return{
+    y:-(amp*jump)+(amp*0.18*settle),
+    scaleX:1-0.018*jump,
+    scaleY:1+0.04*jump
+  };
+}
 function maxNestedNumber(value){let max=0;if(Array.isArray(value)){for(const item of value)max=Math.max(max,maxNestedNumber(item));}else if(Number.isFinite(Number(value)))max=Math.max(max,Math.abs(Number(value)));return max}
 function utf8Bytes(value){if(window.TextEncoder)return new TextEncoder().encode(String(value));const s=unescape(encodeURIComponent(String(value)));const out=new Uint8Array(s.length);for(let i=0;i<s.length;i++)out[i]=s.charCodeAt(i);return out}
 function b64Bytes(bytes){let bin='';for(let i=0;i<bytes.length;i++)bin+=String.fromCharCode(bytes[i]);return btoa(bin)}
@@ -3272,7 +3313,7 @@ discordWsButton?.addEventListener('click',()=>connectObsWebSocket('discord'));
 hidePanelButton?.addEventListener('click',()=>micPanel?.classList.add('hidden'));
 
 const canvas=document.getElementById('c'),ctx=canvas.getContext('2d',{alpha:true});
-async function draw(){const ch=activeCharacter(),size=getCanvasBaseSize(ch),ratio=Math.min(innerWidth/size.width,innerHeight/size.height);canvas.width=innerWidth;canvas.height=innerHeight;ctx.clearRect(0,0,canvas.width,canvas.height);ctx.save();ctx.translate((innerWidth-size.width*ratio)/2,(innerHeight-size.height*ratio)/2);ctx.scale(ratio,ratio);const content=getNaturalContentSize(ch),off=document.createElement('canvas'),margin=140;off.width=content.width+margin*2;off.height=content.height+margin*2;const o=off.getContext('2d',{alpha:true});const store=getLayerStore(ch),t=performance.now()/1000;for(const layer of getDrawLayers()){const parts=(store[layer.id]||[]).filter(p=>p.selected);for(const part of parts){const img=await loadImage(frameUrl(part,layer.id,t,lip));const y=layer.id==='brows'?Number(ch.layerAdjustments?.browsY||0):0;drawWind(o,img,margin,margin+y,content.width,content.height,part,t)}}const tr=ch.transform||{},fl=floatOffset(t);ctx.translate(size.width/2+Number(tr.x||0)+fl.x,size.height/2+Number(tr.y||0)+fl.y);ctx.rotate(Number(tr.rotation||0)*Math.PI/180);ctx.scale(Number(tr.scale||1),Number(tr.scale||1));ctx.drawImage(off,-off.width/2,-off.height/2);ctx.restore();requestAnimationFrame(draw)}draw();
+async function draw(){const ch=activeCharacter(),size=getCanvasBaseSize(ch),ratio=Math.min(innerWidth/size.width,innerHeight/size.height);canvas.width=innerWidth;canvas.height=innerHeight;ctx.clearRect(0,0,canvas.width,canvas.height);ctx.save();ctx.translate((innerWidth-size.width*ratio)/2,(innerHeight-size.height*ratio)/2);ctx.scale(ratio,ratio);const content=getNaturalContentSize(ch),off=document.createElement('canvas'),margin=140;off.width=content.width+margin*2;off.height=content.height+margin*2;const o=off.getContext('2d',{alpha:true});const store=getLayerStore(ch),t=performance.now()/1000;for(const layer of getDrawLayers()){const parts=(store[layer.id]||[]).filter(p=>p.selected);for(const part of parts){const img=await loadImage(frameUrl(part,layer.id,t,lip));const y=layer.id==='brows'?Number(ch.layerAdjustments?.browsY||0):0;drawWind(o,img,margin,margin+y,content.width,content.height,part,t)}}const tr=ch.transform||{},fl=floatOffset(t),vb=voiceBounceTransform(t);ctx.translate(size.width/2+Number(tr.x||0)+fl.x,size.height/2+Number(tr.y||0)+fl.y+vb.y);ctx.rotate(Number(tr.rotation||0)*Math.PI/180);const baseScale=Number(tr.scale||1);ctx.scale(baseScale*vb.scaleX,baseScale*vb.scaleY);ctx.drawImage(off,-off.width/2,-off.height/2);ctx.restore();requestAnimationFrame(draw)}draw();
 <\/script></body></html>`;
     }
     function exportObsHtml() {
